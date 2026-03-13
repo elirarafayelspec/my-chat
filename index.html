@@ -2,7 +2,7 @@
 <html lang="zh-CN" data-theme="light" data-color-theme="blue">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>🤍</title>
 
     <!-- 基础 Favicon -->
@@ -82,6 +82,7 @@
             color: var(--text-primary); 
             transition: background-color 0.5s ease, color 0.5s ease; 
             height: 100vh;
+            height: 100dvh;
             display: flex; 
             flex-direction: column; 
             overflow: hidden; 
@@ -420,10 +421,7 @@
             background-color: var(--secondary-bg); 
             transition: background-color 0.5s ease, border-color 0.5s ease; 
             flex-shrink: 0;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
+            position: relative;
             z-index: 20;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
@@ -1414,7 +1412,7 @@
             .love-days-header { font-size: 12px; }
             .header-actions { gap: 5px; }
             .action-btn { width: 30px; height: 30px; font-size: 16px; }
-            .chat-container { padding: 20px 10px; padding-bottom: inherit; }
+            .chat-container { padding: 20px 10px; }
             .message-wrapper { max-width: 88%; }
             .input-area { padding: 14px 12px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
             .input-btn { width: 42px; height: 42px; }
@@ -1431,7 +1429,7 @@
             .love-days-header { font-size: 10px; }
             .header-actions { gap: 4px; }
             .action-btn { width: 28px; height: 28px; font-size: 14px; }
-            .chat-container { padding: 15px 8px; padding-bottom: inherit; }
+            .chat-container { padding: 15px 8px; }
             .input-area { padding: 12px 10px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
             .input-btn { width: 38px; height: 38px; }
             .message-input { min-height: 38px; padding: 8px 14px; font-size: 14px; }
@@ -6233,39 +6231,6 @@
         initVideoDrag();
         initBackgroundKeepAlive();
         if (settings.partnerVideoEnabled) schedulePartnerVideoCalls();
-
-        // 用 visualViewport API 锁死布局，彻底解决 iOS 键盘弹起/收起跳动问题
-        (function lockLayoutToViewport() {
-            const body = document.body;
-            const inputArea = document.querySelector('.input-area');
-            const chatContainer = DOMElements.chatContainer;
-
-            function applyLayout() {
-                // visualViewport.height = 当前可见高度（键盘弹起时会缩小）
-                const vvHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-                const vvOffsetTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
-
-                // 锁定 body 高度为可见视口高度，防止页面被键盘顶起
-                body.style.height = vvHeight + 'px';
-                body.style.top = vvOffsetTop + 'px';
-                body.style.position = 'fixed';
-                body.style.width = '100%';
-
-                // 同步聊天区 padding-bottom = 输入栏高度
-                if (inputArea && chatContainer) {
-                    chatContainer.style.paddingBottom = inputArea.getBoundingClientRect().height + 'px';
-                }
-            }
-
-            applyLayout();
-
-            if (window.visualViewport) {
-                window.visualViewport.addEventListener('resize', applyLayout);
-                window.visualViewport.addEventListener('scroll', applyLayout);
-            }
-            window.addEventListener('resize', applyLayout);
-            new ResizeObserver(applyLayout).observe(document.querySelector('.input-area'));
-        })();
         setInterval(updateMemoryUsage, 5000);
         // 提前注册 SW 并订阅推送
         _getSwReg().then(() => {
@@ -6276,3 +6241,4 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </body>
 </html>
+
