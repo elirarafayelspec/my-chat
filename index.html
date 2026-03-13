@@ -6057,33 +6057,43 @@
                     body: JSON.stringify(sub)
                 });
                 console.log('Push subscription registered with Worker');
-
-                // 如果自动回复已开启，通知 Worker 按间隔主动推送（锁屏时也能收到）
-                if (settings.autoReplyEnabled) {
-                    scheduleServerPush(sub);
-                }
+                // 同步计划事件到 Worker（让 Cron 接管后台推送）
+                await syncScheduleToWorker();
             } catch(e) {
                 console.log('Push subscribe failed:', e);
             }
         }
 
-        // 向 Worker 注册服务端定时推送计划（用于手机锁屏时仍能收到自动消息通知）
-        async function scheduleServerPush(sub) {
+        // 向 Worker 同步所有计划事件（网页打开时调用，让 Worker 的 Cron 接管推送）
+        async function syncScheduleToWorker() {
+            if (!settings.notificationsEnabled) return;
             try {
-                const intervalHours = settings.hourlyInterval || 1;
+                const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
+                // 下次自动消息时间（当前时间 + 间隔）
+                const nextHourlyAt = Date.now() + intervalMs;
+                // 待发来信时间
+                const pendingLetter = parseInt(localStorage.getItem('pendingLetterAt') || '0');
+                // 下次视频来电时间（随机1~6小时）
+                const nextVideoAt = settings.partnerVideoEnabled
+                    ? Date.now() + (1 + Math.random() * 5) * 60 * 60 * 1000
+                    : 0;
+
                 await fetch(`${PUSH_WORKER_URL}/schedule`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        subscription: sub,
-                        intervalHours: intervalHours,
-                        title: document.title || '🤍',
-                        body: '你有新消息'
+                        nextHourlyAt,
+                        pendingLetterAt: pendingLetter,
+                        nextVideoAt,
+                        hourlyInterval: settings.hourlyInterval || 60,
+                        partnerName: settings.partnerName || '对方',
+                        autoReplyEnabled: settings.autoReplyEnabled,
+                        partnerVideoEnabled: settings.partnerVideoEnabled
                     })
                 });
-                console.log('Server-side push schedule registered');
+                console.log('Schedule synced to Worker');
             } catch(e) {
-                console.log('Schedule registration failed (Worker may not support /schedule yet):', e);
+                console.log('Schedule sync failed:', e);
             }
         }
 
@@ -6251,15 +6261,14 @@
             syncPadding();
         })();
         setInterval(updateMemoryUsage, 5000);
-        // 提前注册 SW 并订阅推送
+        // 提前注册 SW 并订阅推送，同步计划到 Worker
         _getSwReg().then(() => {
-            if (Notification.permission === 'granted') subscribeToPush();
+            if (Notification.permission === 'granted') {
+                subscribeToPush().then(() => syncScheduleToWorker());
+            }
         });
     </script>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </body>
 </html>
-
-
-
