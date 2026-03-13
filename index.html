@@ -3296,15 +3296,28 @@
         // ——— 每小时主动消息 ———
         let hourlyMessageTimer = null;
         function scheduleHourlyMessages() {
+            // 启动时检查：上次关闭到现在，是否错过了消息，补发
+            const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
+            const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
+            const now = Date.now();
+            if (lastFire > 0 && settings.autoReplyEnabled && (now - lastFire) >= intervalMs) {
+                // 每错过一个周期就补发一次
+                const missed = Math.floor((now - lastFire) / intervalMs);
+                for (let i = 0; i < Math.min(missed, 3); i++) {
+                    setTimeout(() => sendHourlyMessages(), i * 1500);
+                }
+            }
+            localStorage.setItem('lastHourlyFire', now);
+
             function scheduleNext() {
                 const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
                 hourlyMessageTimer = setTimeout(() => {
-                    if (settings.autoReplyEnabled) sendHourlyMessages();
+                    if (settings.autoReplyEnabled) {
+                        sendHourlyMessages();
+                        localStorage.setItem('lastHourlyFire', Date.now());
+                    }
                     scheduleNext();
                 }, intervalMs);
-            }
-            if (settings.autoReplyEnabled) {
-                setTimeout(sendHourlyMessages, 5000);
             }
             scheduleNext();
         }
@@ -6210,16 +6223,16 @@
             }
 
             // === 方案3：Page Visibility API 切回前台时补发 ===
-            let lastHourlyFire = Date.now();
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState !== 'visible') return;
                 const now = Date.now();
                 const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
-                const elapsed = now - lastHourlyFire;
+                const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
+                const elapsed = now - lastFire;
                 if (elapsed >= intervalMs && settings.autoReplyEnabled) {
                     sendHourlyMessages();
+                    localStorage.setItem('lastHourlyFire', now);
                 }
-                lastHourlyFire = now;
                 // 检查是否有待发来信
                 checkPendingLetter();
                 // 恢复 AudioContext（iOS 从后台切回时可能 suspend）
