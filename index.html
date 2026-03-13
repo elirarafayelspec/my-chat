@@ -82,7 +82,6 @@
             color: var(--text-primary); 
             transition: background-color 0.5s ease, color 0.5s ease; 
             height: 100vh;
-            height: 100dvh;
             display: flex; 
             flex-direction: column; 
             overflow: hidden; 
@@ -421,7 +420,10 @@
             background-color: var(--secondary-bg); 
             transition: background-color 0.5s ease, border-color 0.5s ease; 
             flex-shrink: 0;
-            position: relative;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
             z-index: 20;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
@@ -1412,7 +1414,7 @@
             .love-days-header { font-size: 12px; }
             .header-actions { gap: 5px; }
             .action-btn { width: 30px; height: 30px; font-size: 16px; }
-            .chat-container { padding: 20px 10px; }
+            .chat-container { padding: 20px 10px; padding-bottom: inherit; }
             .message-wrapper { max-width: 88%; }
             .input-area { padding: 14px 12px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
             .input-btn { width: 42px; height: 42px; }
@@ -1429,7 +1431,7 @@
             .love-days-header { font-size: 10px; }
             .header-actions { gap: 4px; }
             .action-btn { width: 28px; height: 28px; font-size: 14px; }
-            .chat-container { padding: 15px 8px; }
+            .chat-container { padding: 15px 8px; padding-bottom: inherit; }
             .input-area { padding: 12px 10px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
             .input-btn { width: 38px; height: 38px; }
             .message-input { min-height: 38px; padding: 8px 14px; font-size: 14px; }
@@ -6231,6 +6233,23 @@
         initVideoDrag();
         initBackgroundKeepAlive();
         if (settings.partnerVideoEnabled) schedulePartnerVideoCalls();
+
+        // 同步聊天区 padding-bottom = 输入栏高度，消息不被遮住
+        (function initPaddingSync() {
+            const chatContainer = DOMElements.chatContainer;
+            const inputArea = document.querySelector('.input-area');
+            function syncPadding() {
+                if (inputArea && chatContainer) {
+                    chatContainer.style.paddingBottom = inputArea.getBoundingClientRect().height + 'px';
+                }
+            }
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', syncPadding);
+            }
+            window.addEventListener('resize', syncPadding);
+            new ResizeObserver(syncPadding).observe(inputArea);
+            syncPadding();
+        })();
         setInterval(updateMemoryUsage, 5000);
         // 提前注册 SW 并订阅推送
         _getSwReg().then(() => {
@@ -6241,4 +6260,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </body>
 </html>
+
+
 
