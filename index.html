@@ -1591,6 +1591,39 @@
         }
         .slider-sub-title i { color: var(--accent-color); font-size: 13px; }
 
+        /* 音乐播放器 */
+        .music-mode-btn {
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 1.5px solid var(--border-color);
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .music-mode-btn.active {
+            background: var(--accent-color);
+            border-color: var(--accent-color);
+            color: #fff;
+        }
+        .music-playlist-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .music-playlist-item:hover { background: var(--hover-bg); }
+        .music-playlist-item.playing { color: var(--accent-color); font-weight: 500; }
+        .music-playlist-item .music-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .music-playlist-item .music-item-del { opacity: 0.4; font-size: 11px; padding: 2px 4px; }
+        .music-playlist-item .music-item-del:hover { opacity: 1; color: #f44336; }
+
         /* ——— 加号按钮 & 弹出菜单 ——— */
         .plus-menu-overlay {
             position: fixed;
@@ -2386,6 +2419,47 @@
                 <div class="toggle-row">
                     <div class="toggle-label"><i class="fas fa-video"></i>对方可主动视频通话</div>
                     <label class="toggle-switch"><input type="checkbox" id="toggle-partner-video"><span class="toggle-slider"></span></label>
+                </div>
+            </div>
+
+            <!-- 后台保活音乐播放器 -->
+            <div class="slider-sub-group" id="music-player-group">
+                <div class="slider-sub-title"><i class="fas fa-music"></i>后台保活播放器</div>
+                <div class="toggle-row">
+                    <div class="toggle-label"><i class="fas fa-play-circle"></i>启用播放器</div>
+                    <label class="toggle-switch"><input type="checkbox" id="toggle-music-player"><span class="toggle-slider"></span></label>
+                </div>
+                <div id="music-player-controls" style="display:none;">
+                    <div class="settings-item" id="upload-audio-btn" style="margin-top:4px;">
+                        <i class="fas fa-file-audio"></i><span>上传音频文件</span>
+                    </div>
+                    <input type="file" id="audio-file-input" accept="audio/*" multiple style="display:none;">
+                    <div id="music-playlist" style="margin:8px 0; max-height:140px; overflow-y:auto;"></div>
+                    <div id="music-now-playing" style="font-size:12px; color:var(--text-secondary); padding:4px 0; display:none; align-items:center; gap:8px;">
+                        <i class="fas fa-volume-up" style="flex-shrink:0;"></i>
+                        <span id="music-track-name" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">-</span>
+                        <button id="music-prev-btn" style="background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:2px 4px;"><i class="fas fa-step-backward"></i></button>
+                        <button id="music-playpause-btn" style="background:none;border:none;cursor:pointer;color:var(--accent-color);font-size:16px;padding:2px 4px;"><i class="fas fa-pause"></i></button>
+                        <button id="music-next-btn" style="background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:2px 4px;"><i class="fas fa-step-forward"></i></button>
+                    </div>
+                    <div class="slider-row" style="margin-top:6px;">
+                        <div class="slider-row-header">
+                            <div class="slider-row-label">播放模式</div>
+                        </div>
+                        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                            <button class="music-mode-btn active" data-mode="list">列表循环</button>
+                            <button class="music-mode-btn" data-mode="single">单曲循环</button>
+                            <button class="music-mode-btn" data-mode="random">随机播放</button>
+                        </div>
+                    </div>
+                    <div class="slider-row" style="margin-top:8px;">
+                        <div class="slider-row-header">
+                            <div class="slider-row-label">定时关闭</div>
+                            <div class="slider-row-value" id="val-music-timer">关闭</div>
+                        </div>
+                        <input type="range" min="0" max="120" value="0" step="10" class="range-slider" id="slider-music-timer">
+                    </div>
+                    <div id="music-timer-status" style="font-size:11px; color:var(--text-secondary); padding:2px 0; display:none;"></div>
                 </div>
             </div>
 
@@ -6156,6 +6230,251 @@
         }
 
         // ——— 后台保活（防止浏览器暂停定时器）———
+        // ——— 音乐播放器（后台保活）———
+        function initMusicPlayer() {
+            // 用 IndexedDB 存音频文件，避免 localStorage 5MB 限制
+            let db = null;
+            let playlist = []; // [{id, name}] 轻量索引
+            let currentIndex = 0;
+            let playMode = localStorage.getItem('musicPlayMode') || 'list';
+            let timerMinutes = 0;
+            let timerTimeout = null;
+            const audio = new Audio();
+            audio.loop = false;
+
+            const toggleEl = document.getElementById('toggle-music-player');
+            const controlsEl = document.getElementById('music-player-controls');
+            const uploadBtn = document.getElementById('upload-audio-btn');
+            const fileInput = document.getElementById('audio-file-input');
+            const playlistEl = document.getElementById('music-playlist');
+            const nowPlayingEl = document.getElementById('music-now-playing');
+            const trackNameEl = document.getElementById('music-track-name');
+            const timerSlider = document.getElementById('slider-music-timer');
+            const timerVal = document.getElementById('val-music-timer');
+            const timerStatus = document.getElementById('music-timer-status');
+
+            // 初始化 IndexedDB
+            function openDB() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open('MusicPlayerDB', 1);
+                    req.onupgradeneeded = e => {
+                        e.target.result.createObjectStore('tracks', { keyPath: 'id', autoIncrement: true });
+                    };
+                    req.onsuccess = e => resolve(e.target.result);
+                    req.onerror = () => reject();
+                });
+            }
+
+            function dbGetAll() {
+                return new Promise(resolve => {
+                    const tx = db.transaction('tracks', 'readonly');
+                    const req = tx.objectStore('tracks').getAll();
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve([]);
+                });
+            }
+
+            function dbAdd(track) {
+                return new Promise(resolve => {
+                    const tx = db.transaction('tracks', 'readwrite');
+                    const req = tx.objectStore('tracks').add(track);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve(null);
+                });
+            }
+
+            function dbDelete(id) {
+                return new Promise(resolve => {
+                    const tx = db.transaction('tracks', 'readwrite');
+                    tx.objectStore('tracks').delete(id);
+                    tx.oncomplete = () => resolve();
+                });
+            }
+
+            function dbGet(id) {
+                return new Promise(resolve => {
+                    const tx = db.transaction('tracks', 'readonly');
+                    const req = tx.objectStore('tracks').get(id);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve(null);
+                });
+            }
+
+            // 渲染播放列表
+            function renderPlaylist() {
+                if (!playlistEl) return;
+                playlistEl.innerHTML = '';
+                if (playlist.length === 0) {
+                    playlistEl.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">暂无音频，请上传</div>';
+                    return;
+                }
+                playlist.forEach((track, idx) => {
+                    const isPlaying = idx === currentIndex && !audio.paused;
+                    const item = document.createElement('div');
+                    item.className = 'music-playlist-item' + (isPlaying ? ' playing' : '');
+                    item.innerHTML = `<i class="fas fa-${isPlaying ? 'volume-up' : 'music'}" style="font-size:11px;width:14px;"></i><span class="music-item-name">${track.name}</span><span class="music-item-del" data-id="${track.id}"><i class="fas fa-times"></i></span>`;
+                    item.addEventListener('click', async (e) => {
+                        if (e.target.closest('.music-item-del')) {
+                            const id = parseInt(e.target.closest('.music-item-del').dataset.id);
+                            await dbDelete(id);
+                            playlist = playlist.filter(t => t.id !== id);
+                            if (currentIndex >= playlist.length) currentIndex = 0;
+                            renderPlaylist();
+                            if (playlist.length === 0) { audio.pause(); if (nowPlayingEl) nowPlayingEl.style.display = 'none'; }
+                            return;
+                        }
+                        playTrack(idx);
+                    });
+                    playlistEl.appendChild(item);
+                });
+            }
+
+            // 播放指定曲目
+            async function playTrack(idx) {
+                if (playlist.length === 0) return;
+                currentIndex = idx;
+                const track = await dbGet(playlist[currentIndex].id);
+                if (!track) return;
+                const blob = new Blob([track.buffer], { type: track.mimeType });
+                audio.src = URL.createObjectURL(blob);
+                audio.loop = playMode === 'single';
+                audio.play().catch(() => {});
+                if (trackNameEl) trackNameEl.textContent = playlist[currentIndex].name;
+                if (nowPlayingEl) nowPlayingEl.style.display = 'block';
+                renderPlaylist();
+            }
+
+            audio.addEventListener('ended', () => {
+                if (playMode === 'single') return;
+                if (playMode === 'random') playTrack(Math.floor(Math.random() * playlist.length));
+                else playTrack((currentIndex + 1) % playlist.length);
+            });
+
+            // 播放/暂停按钮
+            const playPauseBtn = document.getElementById('music-playpause-btn');
+            const prevBtn = document.getElementById('music-prev-btn');
+            const nextBtn = document.getElementById('music-next-btn');
+
+            function updatePlayPauseIcon() {
+                if (!playPauseBtn) return;
+                playPauseBtn.innerHTML = audio.paused
+                    ? '<i class="fas fa-play"></i>'
+                    : '<i class="fas fa-pause"></i>';
+            }
+
+            if (playPauseBtn) {
+                playPauseBtn.addEventListener('click', () => {
+                    if (audio.paused) audio.play().catch(() => {});
+                    else audio.pause();
+                    updatePlayPauseIcon();
+                    renderPlaylist();
+                });
+            }
+
+            if (prevBtn) {
+                prevBtn.addEventListener('click', () => {
+                    if (playlist.length === 0) return;
+                    playTrack((currentIndex - 1 + playlist.length) % playlist.length);
+                });
+            }
+
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => {
+                    if (playlist.length === 0) return;
+                    if (playMode === 'random') playTrack(Math.floor(Math.random() * playlist.length));
+                    else playTrack((currentIndex + 1) % playlist.length);
+                });
+            }
+
+            audio.addEventListener('play', updatePlayPauseIcon);
+            audio.addEventListener('pause', updatePlayPauseIcon);
+
+            // 恢复播放模式按钮
+            document.querySelectorAll('.music-mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === playMode);
+                btn.addEventListener('click', () => {
+                    playMode = btn.dataset.mode;
+                    localStorage.setItem('musicPlayMode', playMode);
+                    document.querySelectorAll('.music-mode-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    audio.loop = playMode === 'single';
+                });
+            });
+
+            // 开关切换
+            if (toggleEl) {
+                toggleEl.addEventListener('change', () => {
+                    const enabled = toggleEl.checked;
+                    localStorage.setItem('musicPlayerEnabled', enabled);
+                    if (controlsEl) controlsEl.style.display = enabled ? 'block' : 'none';
+                    if (enabled && playlist.length > 0) playTrack(currentIndex);
+                    else { audio.pause(); if (nowPlayingEl) nowPlayingEl.style.display = 'none'; }
+                });
+            }
+
+            // 上传音频
+            if (uploadBtn) uploadBtn.addEventListener('click', () => fileInput && fileInput.click());
+            if (fileInput) {
+                fileInput.addEventListener('change', async () => {
+                    const files = Array.from(fileInput.files);
+                    for (const file of files) {
+                        const buffer = await file.arrayBuffer();
+                        const id = await dbAdd({ name: file.name.replace(/\.[^.]+$/, ''), buffer, mimeType: file.type });
+                        if (id) playlist.push({ id, name: file.name.replace(/\.[^.]+$/, '') });
+                    }
+                    renderPlaylist();
+                    if (toggleEl && toggleEl.checked && audio.paused && playlist.length > 0) playTrack(0);
+                    fileInput.value = '';
+                });
+            }
+
+            // 定时关闭
+            if (timerSlider) {
+                timerSlider.addEventListener('input', () => {
+                    timerMinutes = parseInt(timerSlider.value);
+                    timerVal.textContent = timerMinutes === 0 ? '关闭' : `${timerMinutes}分钟`;
+                    clearTimeout(timerTimeout);
+                    timerStatus.style.display = 'none';
+                    if (timerMinutes > 0) {
+                        timerStatus.style.display = 'block';
+                        timerStatus.textContent = `将在 ${timerMinutes} 分钟后停止播放`;
+                        timerTimeout = setTimeout(() => {
+                            audio.pause();
+                            if (toggleEl) toggleEl.checked = false;
+                            localStorage.setItem('musicPlayerEnabled', 'false');
+                            if (controlsEl) controlsEl.style.display = 'none';
+                            timerStatus.textContent = '已定时停止';
+                        }, timerMinutes * 60000);
+                    }
+                });
+            }
+
+            // 初始化：打开DB，加载列表
+            openDB().then(async (database) => {
+                db = database;
+                const all = await dbGetAll();
+                playlist = all.map(t => ({ id: t.id, name: t.name }));
+                renderPlaylist();
+
+                const musicEnabled = localStorage.getItem('musicPlayerEnabled') === 'true';
+                if (toggleEl) toggleEl.checked = musicEnabled;
+                if (controlsEl) controlsEl.style.display = musicEnabled ? 'block' : 'none';
+
+                if (musicEnabled && playlist.length > 0) {
+                    const startOnInteraction = () => {
+                        playTrack(currentIndex);
+                        document.removeEventListener('click', startOnInteraction);
+                        document.removeEventListener('touchstart', startOnInteraction);
+                    };
+                    document.addEventListener('click', startOnInteraction);
+                    document.addEventListener('touchstart', startOnInteraction);
+                }
+            }).catch(() => {
+                // IndexedDB 不可用时降级提示
+                if (playlistEl) playlistEl.innerHTML = '<div style="font-size:12px;color:#f44336;padding:4px 0;">存储初始化失败</div>';
+            });
+        }
+
         function initBackgroundKeepAlive() {
             // === 方案1：Web Audio API 无声音频循环（最有效，防止 iOS 后台暂停）===
             let audioCtx = null;
@@ -6255,6 +6574,7 @@
         setupCustomColorPicker();
         initVideoDrag();
         initBackgroundKeepAlive();
+        initMusicPlayer();
         if (settings.partnerVideoEnabled) schedulePartnerVideoCalls();
 
         // 同步聊天区 padding-bottom = 输入栏高度，消息不被遮住
