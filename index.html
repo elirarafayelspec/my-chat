@@ -3370,30 +3370,18 @@
         // ——— 每小时主动消息 ———
         let hourlyMessageTimer = null;
         function scheduleHourlyMessages() {
-            // 启动时检查：上次关闭到现在，是否错过了消息，补发
+            // 启动时检查是否错过了消息
             const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
             const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
             const now = Date.now();
             if (lastFire > 0 && settings.autoReplyEnabled && (now - lastFire) >= intervalMs) {
-                // 每错过一个周期就补发一次
                 const missed = Math.floor((now - lastFire) / intervalMs);
                 for (let i = 0; i < Math.min(missed, 3); i++) {
                     setTimeout(() => sendHourlyMessages(), i * 1500);
                 }
             }
-            localStorage.setItem('lastHourlyFire', now);
-
-            function scheduleNext() {
-                const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
-                hourlyMessageTimer = setTimeout(() => {
-                    if (settings.autoReplyEnabled) {
-                        sendHourlyMessages();
-                        localStorage.setItem('lastHourlyFire', Date.now());
-                    }
-                    scheduleNext();
-                }, intervalMs);
-            }
-            scheduleNext();
+            if (!lastFire) localStorage.setItem('lastHourlyFire', now);
+            // 后续由 Web Worker tick 驱动（checkAllScheduledEvents）
         }
         function sendHourlyMessages() {
             const min = settings.hourlyCountMin;
@@ -5448,19 +5436,14 @@
         }
 
         function schedulePartnerVideoCalls() {
-            function scheduleNext() {
-                if (!settings.partnerVideoEnabled) { partnerVideoScheduled = false; return; }
-                // 完全随机：1小时到6小时之间
-                const minMs = 1 * 60 * 60 * 1000;
-                const maxMs = 6 * 60 * 60 * 1000;
-                const delay = Math.random() * (maxMs - minMs) + minMs;
-                partnerVideoCallTimer = setTimeout(() => {
-                    if (settings.partnerVideoEnabled && !videoCallActive) showIncomingCall();
-                    scheduleNext();
-                }, delay);
-            }
             partnerVideoScheduled = true;
-            scheduleNext();
+            // 如果还没有记录下次来电时间，随机设置一个1~6小时后
+            const existing = parseInt(localStorage.getItem('nextVideoAt') || '0');
+            if (!existing || existing < Date.now()) {
+                const next = Date.now() + (1 + Math.random() * 5) * 3600000;
+                localStorage.setItem('nextVideoAt', next);
+            }
+            // 实际触发由 Web Worker tick 驱动（checkAllScheduledEvents）
         }
 
         function showIncomingCall() {
@@ -6312,8 +6295,9 @@
                     const isPlaying = idx === currentIndex && !audio.paused;
                     const item = document.createElement('div');
                     item.className = 'music-playlist-item' + (isPlaying ? ' playing' : '');
-                    item.innerHTML = `<i class="fas fa-${isPlaying ? 'volume-up' : 'music'}" style="font-size:11px;width:14px;"></i><span class="music-item-name">${track.name}</span><span class="music-item-del" data-id="${track.id}"><i class="fas fa-times"></i></span>`;
+                    item.innerHTML = `<i class="fas fa-${isPlaying ? 'volume-up' : 'music'}" style="font-size:11px;width:14px;flex-shrink:0;"></i><span class="music-item-name" data-id="${track.id}">${track.name}</span><span class="music-item-rename" data-id="${track.id}" style="opacity:0.4;font-size:11px;padding:2px 4px;cursor:pointer;" title="重命名"><i class="fas fa-pen"></i></span><span class="music-item-del" data-id="${track.id}"><i class="fas fa-times"></i></span>`;
                     item.addEventListener('click', async (e) => {
+                        // 删除
                         if (e.target.closest('.music-item-del')) {
                             const id = parseInt(e.target.closest('.music-item-del').dataset.id);
                             await dbDelete(id);
@@ -6321,6 +6305,26 @@
                             if (currentIndex >= playlist.length) currentIndex = 0;
                             renderPlaylist();
                             if (playlist.length === 0) { audio.pause(); if (nowPlayingEl) nowPlayingEl.style.display = 'none'; }
+                            return;
+                        }
+                        // 重命名
+                        if (e.target.closest('.music-item-rename')) {
+                            const id = parseInt(e.target.closest('.music-item-rename').dataset.id);
+                            const t = playlist.find(t => t.id === id);
+                            if (!t) return;
+                            const newName = prompt('修改音频名称：', t.name);
+                            if (newName && newName.trim()) {
+                                t.name = newName.trim();
+                                // 更新 IndexedDB
+                                const dbTrack = await dbGet(id);
+                                if (dbTrack) {
+                                    dbTrack.name = t.name;
+                                    const tx = db.transaction('tracks', 'readwrite');
+                                    tx.objectStore('tracks').put(dbTrack);
+                                }
+                                if (idx === currentIndex && trackNameEl) trackNameEl.textContent = t.name;
+                                renderPlaylist();
+                            }
                             return;
                         }
                         playTrack(idx);
@@ -6476,48 +6480,9 @@
         }
 
         function initBackgroundKeepAlive() {
-            // === 方案1：Web Audio API 无声音频循环（最有效，防止 iOS 后台暂停）===
-            let audioCtx = null;
-            let silentSource = null;
-            function startSilentAudio() {
-                try {
-                    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    if (audioCtx.state === 'suspended') audioCtx.resume();
-                    // 创建一个极低音量（接近静音）的振荡器，保持 AudioContext 活跃
-                    if (silentSource) { try { silentSource.stop(); } catch(e){} }
-                    const oscillator = audioCtx.createOscillator();
-                    const gainNode = audioCtx.createGain();
-                    gainNode.gain.setValueAtTime(0.00001, audioCtx.currentTime); // 几乎无声
-                    oscillator.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    oscillator.start();
-                    silentSource = oscillator;
-                } catch(e) {}
-            }
-            // 用户首次交互后才能启动 AudioContext（浏览器限制）
-            const startOnInteraction = () => {
-                startSilentAudio();
-                document.removeEventListener('click', startOnInteraction);
-                document.removeEventListener('touchstart', startOnInteraction);
-                document.removeEventListener('keydown', startOnInteraction);
-            };
-            document.addEventListener('click', startOnInteraction);
-            document.addEventListener('touchstart', startOnInteraction);
-            document.addEventListener('keydown', startOnInteraction);
-
-            // === 方案2：Web Worker 计时（后台也不被节流）===
+            // === Web Worker 计时驱动所有后台事件 ===
             const workerCode = `
-                let timers = {};
-                let nextId = 1;
-                self.onmessage = function(e) {
-                    const { type, id, delay } = e.data;
-                    if (type === 'setInterval') {
-                        timers[id] = setInterval(() => self.postMessage({ id }), delay);
-                    } else if (type === 'clearInterval') {
-                        clearInterval(timers[id]);
-                        delete timers[id];
-                    }
-                };
+                setInterval(() => self.postMessage('tick'), 30000);
             `;
             let bgWorker = null;
             try {
@@ -6525,41 +6490,69 @@
                 bgWorker = new Worker(URL.createObjectURL(blob));
             } catch(e) {}
 
-            // 用 Worker 每30秒 tick 一次，驱动主线程定时逻辑
-            let lastTick = Date.now();
             if (bgWorker) {
-                bgWorker.postMessage({ type: 'setInterval', id: 1, delay: 30000 });
-                bgWorker.onmessage = () => {
-                    const now = Date.now();
-                    const elapsed = now - lastTick;
-                    lastTick = now;
-                    // 后台期间超过一个消息周期，补发
-                    const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
-                    if (elapsed >= intervalMs && settings.autoReplyEnabled) {
-                        sendHourlyMessages();
-                    }
-                };
+                bgWorker.onmessage = () => checkAllScheduledEvents();
             }
 
-            // === 方案3：Page Visibility API 切回前台时补发 ===
-            document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState !== 'visible') return;
+            // 每30秒也用普通 setInterval 保底
+            setInterval(checkAllScheduledEvents, 30000);
+
+            // === 检查所有计划事件 ===
+            function checkAllScheduledEvents() {
                 const now = Date.now();
-                const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
+
+                // 1. 小时消息
                 const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
-                const elapsed = now - lastFire;
-                if (elapsed >= intervalMs && settings.autoReplyEnabled) {
+                const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
+                if (settings.autoReplyEnabled && lastFire > 0 && (now - lastFire) >= intervalMs) {
                     sendHourlyMessages();
                     localStorage.setItem('lastHourlyFire', now);
                 }
-                // 检查是否有待发来信
-                checkPendingLetter();
-                // 恢复 AudioContext（iOS 从后台切回时可能 suspend）
+
+                // 2. 待发来信
+                const pendingLetter = parseInt(localStorage.getItem('pendingLetterAt') || '0');
+                if (pendingLetter > 0 && now >= pendingLetter) {
+                    deliverReplyLetter();
+                }
+
+                // 3. 视频来电
+                const nextVideo = parseInt(localStorage.getItem('nextVideoAt') || '0');
+                if (settings.partnerVideoEnabled && nextVideo > 0 && now >= nextVideo && !videoCallActive) {
+                    showIncomingCall();
+                    // 随机1~6小时后下一次
+                    const next = now + (1 + Math.random() * 5) * 3600000;
+                    localStorage.setItem('nextVideoAt', next);
+                }
+            }
+
+            // === AudioContext 保活（用户交互后启动）===
+            let audioCtx = null;
+            const startSilentAudio = () => {
+                try {
+                    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioCtx.state === 'suspended') audioCtx.resume();
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    gainNode.gain.setValueAtTime(0.00001, audioCtx.currentTime);
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    oscillator.start();
+                } catch(e) {}
+            };
+            const startOnInteraction = () => {
+                startSilentAudio();
+                document.removeEventListener('click', startOnInteraction);
+                document.removeEventListener('touchstart', startOnInteraction);
+            };
+            document.addEventListener('click', startOnInteraction);
+            document.addEventListener('touchstart', startOnInteraction);
+
+            // === visibilitychange 切回前台时补检查 ===
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState !== 'visible') return;
+                checkAllScheduledEvents();
                 if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
             });
-
-            // 备用：普通 setInterval 保底（部分浏览器后台会降频但不暂停）
-            setInterval(() => {}, 30000);
         }
 
         // ——— 初始化 ———
