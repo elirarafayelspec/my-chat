@@ -6577,21 +6577,23 @@
             const header = document.querySelector('.header');
             const statusBar = document.querySelector('.ios-status-bar');
 
-            function syncHeight() {
+            function syncClip() {
                 if (!mainChatArea || !inputArea) return;
-                // 用 document.documentElement.clientHeight 而非 window.innerHeight
-                // clientHeight 不受键盘影响，始终是视口实际高度
-                const inputH = inputArea.getBoundingClientRect().height;
-                const headerH = header ? header.getBoundingClientRect().height : 0;
-                const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
-                const vh = document.documentElement.clientHeight;
-                mainChatArea.style.height = (vh - headerH - statusH - inputH) + 'px';
-                mainChatArea.style.flex = 'none';
+                const inputRect = inputArea.getBoundingClientRect();
+                const chatRect = mainChatArea.getBoundingClientRect();
+                // clip-path 裁切底部：从 main-chat-area 顶部算，裁到输入栏顶边
+                const clipBottom = inputRect.top - chatRect.top;
+                mainChatArea.style.clipPath = `inset(0 0 ${chatRect.height - clipBottom}px 0)`;
+                // 同时确保 paddingBottom 让最后一条消息不被遮住
+                if (DOMElements.chatContainer) {
+                    DOMElements.chatContainer.style.paddingBottom = inputArea.getBoundingClientRect().height + 'px';
+                }
             }
 
-            if (inputArea) new ResizeObserver(syncHeight).observe(inputArea);
-            if (header) new ResizeObserver(syncHeight).observe(header);
-            syncHeight();
+            if (inputArea) new ResizeObserver(syncClip).observe(inputArea);
+            if (header) new ResizeObserver(syncClip).observe(header);
+            window.addEventListener('resize', syncClip);
+            syncClip();
         })();
         setInterval(updateMemoryUsage, 5000);
         // 提前注册 SW 并订阅推送，同步计划到 Worker
