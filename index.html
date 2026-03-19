@@ -6573,27 +6573,28 @@
         // 同步聊天区 padding-bottom = 输入栏高度，消息不被遮住
         (function initPaddingSync() {
             const mainChatArea = document.querySelector('.main-chat-area');
+            const chatContainer = DOMElements.chatContainer;
             const inputArea = document.querySelector('.input-area');
             const header = document.querySelector('.header');
             const statusBar = document.querySelector('.ios-status-bar');
 
-            function syncClip() {
+            function syncLayout() {
                 if (!mainChatArea || !inputArea) return;
-                const inputRect = inputArea.getBoundingClientRect();
-                const chatRect = mainChatArea.getBoundingClientRect();
-                // clip-path 裁切底部：从 main-chat-area 顶部算，裁到输入栏顶边
-                const clipBottom = inputRect.top - chatRect.top;
-                mainChatArea.style.clipPath = `inset(0 0 ${chatRect.height - clipBottom}px 0)`;
-                // 同时确保 paddingBottom 让最后一条消息不被遮住
-                if (DOMElements.chatContainer) {
-                    DOMElements.chatContainer.style.paddingBottom = inputArea.getBoundingClientRect().height + 'px';
-                }
+                const inputH = inputArea.getBoundingClientRect().height;
+                const headerH = header ? header.getBoundingClientRect().height : 0;
+                const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
+                const vh = window.screen.height;
+                // main-chat-area 高度 = 全屏 - 顶部栏 - 底部栏
+                mainChatArea.style.height = (vh - headerH - statusH - inputH) + 'px';
+                mainChatArea.style.flex = 'none';
+                mainChatArea.style.clipPath = 'none';
+                // chat-container padding-bottom 留出足够空间让最后一条消息完整显示
+                if (chatContainer) chatContainer.style.paddingBottom = '16px';
             }
 
-            if (inputArea) new ResizeObserver(syncClip).observe(inputArea);
-            if (header) new ResizeObserver(syncClip).observe(header);
-            window.addEventListener('resize', syncClip);
-            syncClip();
+            if (inputArea) new ResizeObserver(syncLayout).observe(inputArea);
+            if (header) new ResizeObserver(syncLayout).observe(header);
+            syncLayout();
         })();
         setInterval(updateMemoryUsage, 5000);
         // 提前注册 SW 并订阅推送，同步计划到 Worker
