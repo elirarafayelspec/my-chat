@@ -6577,23 +6577,18 @@
             const header = document.querySelector('.header');
             const statusBar = document.querySelector('.ios-status-bar');
 
-            let baseHeight = 0; // 记录键盘收起时的高度，不随键盘变化
-
             function syncHeight() {
                 if (!mainChatArea || !inputArea) return;
+                // 用 document.documentElement.clientHeight 而非 window.innerHeight
+                // clientHeight 不受键盘影响，始终是视口实际高度
                 const inputH = inputArea.getBoundingClientRect().height;
                 const headerH = header ? header.getBoundingClientRect().height : 0;
                 const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
-                // 用 screen.height 或记录的 baseHeight，防止键盘弹出时高度变化
-                const vh = window.innerHeight;
-                if (vh > baseHeight) baseHeight = vh; // 只在高度增大时更新（键盘收起）
-                const chatH = baseHeight - headerH - statusH - inputH;
-                mainChatArea.style.height = chatH + 'px';
+                const vh = document.documentElement.clientHeight;
+                mainChatArea.style.height = (vh - headerH - statusH - inputH) + 'px';
                 mainChatArea.style.flex = 'none';
-                if (DOMElements.chatContainer) DOMElements.chatContainer.style.paddingBottom = '8px';
             }
 
-            window.addEventListener('resize', syncHeight);
             if (inputArea) new ResizeObserver(syncHeight).observe(inputArea);
             if (header) new ResizeObserver(syncHeight).observe(header);
             syncHeight();
