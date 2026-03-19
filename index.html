@@ -6572,19 +6572,25 @@
 
         // 同步聊天区 padding-bottom = 输入栏高度，消息不被遮住
         (function initPaddingSync() {
-            const chatContainer = DOMElements.chatContainer;
+            const mainChatArea = document.querySelector('.main-chat-area');
             const inputArea = document.querySelector('.input-area');
-            function syncPadding() {
-                if (inputArea && chatContainer) {
-                    chatContainer.style.paddingBottom = inputArea.getBoundingClientRect().height + 'px';
-                }
+            const header = document.querySelector('.header');
+            const statusBar = document.querySelector('.ios-status-bar');
+            function syncHeight() {
+                if (!mainChatArea || !inputArea) return;
+                const inputH = inputArea.getBoundingClientRect().height;
+                const headerH = header ? header.getBoundingClientRect().height : 0;
+                const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
+                const vh = window.innerHeight;
+                mainChatArea.style.height = (vh - headerH - statusH - inputH) + 'px';
+                mainChatArea.style.flex = 'none';
             }
             if (window.visualViewport) {
-                window.visualViewport.addEventListener('resize', syncPadding);
+                window.visualViewport.addEventListener('resize', syncHeight);
             }
-            window.addEventListener('resize', syncPadding);
-            new ResizeObserver(syncPadding).observe(inputArea);
-            syncPadding();
+            window.addEventListener('resize', syncHeight);
+            new ResizeObserver(syncHeight).observe(inputArea);
+            syncHeight();
         })();
         setInterval(updateMemoryUsage, 5000);
         // 提前注册 SW 并订阅推送，同步计划到 Worker
