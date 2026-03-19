@@ -6579,21 +6579,24 @@
             const statusBar = document.querySelector('.ios-status-bar');
 
             function syncLayout() {
-                if (!mainChatArea || !inputArea) return;
-                const inputH = inputArea.getBoundingClientRect().height;
-                const headerH = header ? header.getBoundingClientRect().height : 0;
+                if (!mainChatArea || !inputArea || !header) return;
+                const headerBottom = header.getBoundingClientRect().bottom;
                 const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
-                const vh = window.screen.height;
-                // main-chat-area 高度 = 全屏 - 顶部栏 - 底部栏
-                mainChatArea.style.height = (vh - headerH - statusH - inputH) + 'px';
-                mainChatArea.style.flex = 'none';
-                mainChatArea.style.clipPath = 'none';
-                // chat-container padding-bottom 留出足够空间让最后一条消息完整显示
+                const inputTop = inputArea.getBoundingClientRect().top;
+                // main-chat-area 高度 = 输入栏顶边 - 顶部栏底边
+                const chatH = inputTop - headerBottom - statusH;
+                if (chatH > 0) {
+                    mainChatArea.style.height = chatH + 'px';
+                    mainChatArea.style.flex = 'none';
+                }
                 if (chatContainer) chatContainer.style.paddingBottom = '16px';
             }
 
             if (inputArea) new ResizeObserver(syncLayout).observe(inputArea);
             if (header) new ResizeObserver(syncLayout).observe(header);
+            window.addEventListener('resize', syncLayout);
+            // 延迟执行确保 fixed 元素已定位
+            setTimeout(syncLayout, 100);
             syncLayout();
         })();
         setInterval(updateMemoryUsage, 5000);
