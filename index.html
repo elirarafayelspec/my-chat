@@ -6573,23 +6573,30 @@
         // 同步聊天区 padding-bottom = 输入栏高度，消息不被遮住
         (function initPaddingSync() {
             const mainChatArea = document.querySelector('.main-chat-area');
+            const chatContainer = DOMElements.chatContainer;
             const inputArea = document.querySelector('.input-area');
             const header = document.querySelector('.header');
             const statusBar = document.querySelector('.ios-status-bar');
+
             function syncHeight() {
                 if (!mainChatArea || !inputArea) return;
                 const inputH = inputArea.getBoundingClientRect().height;
                 const headerH = header ? header.getBoundingClientRect().height : 0;
                 const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
                 const vh = window.innerHeight;
-                mainChatArea.style.height = (vh - headerH - statusH - inputH) + 'px';
+                const chatH = vh - headerH - statusH - inputH;
+                mainChatArea.style.height = chatH + 'px';
                 mainChatArea.style.flex = 'none';
+                // 确保滚动到底部时最后一条消息不被遮住
+                if (chatContainer) chatContainer.style.paddingBottom = '8px';
             }
+
             if (window.visualViewport) {
                 window.visualViewport.addEventListener('resize', syncHeight);
             }
             window.addEventListener('resize', syncHeight);
-            new ResizeObserver(syncHeight).observe(inputArea);
+            if (inputArea) new ResizeObserver(syncHeight).observe(inputArea);
+            if (header) new ResizeObserver(syncHeight).observe(header);
             syncHeight();
         })();
         setInterval(updateMemoryUsage, 5000);
