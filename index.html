@@ -420,10 +420,7 @@
             background-color: var(--secondary-bg); 
             transition: background-color 0.5s ease, border-color 0.5s ease; 
             flex-shrink: 0;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
+            position: relative;
             z-index: 20;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
@@ -6571,34 +6568,7 @@
         if (settings.partnerVideoEnabled) schedulePartnerVideoCalls();
 
         // 同步聊天区 padding-bottom = 输入栏高度，消息不被遮住
-        (function initPaddingSync() {
-            const mainChatArea = document.querySelector('.main-chat-area');
-            const chatContainer = DOMElements.chatContainer;
-            const inputArea = document.querySelector('.input-area');
-            const header = document.querySelector('.header');
-            const statusBar = document.querySelector('.ios-status-bar');
-
-            function syncLayout() {
-                if (!mainChatArea || !inputArea || !header) return;
-                const headerBottom = header.getBoundingClientRect().bottom;
-                const statusH = statusBar ? statusBar.getBoundingClientRect().height : 0;
-                const inputTop = inputArea.getBoundingClientRect().top;
-                // main-chat-area 高度 = 输入栏顶边 - 顶部栏底边
-                const chatH = inputTop - headerBottom - statusH;
-                if (chatH > 0) {
-                    mainChatArea.style.height = chatH + 'px';
-                    mainChatArea.style.flex = 'none';
-                }
-                if (chatContainer) chatContainer.style.paddingBottom = '16px';
-            }
-
-            if (inputArea) new ResizeObserver(syncLayout).observe(inputArea);
-            if (header) new ResizeObserver(syncLayout).observe(header);
-            window.addEventListener('resize', syncLayout);
-            // 延迟执行确保 fixed 元素已定位
-            setTimeout(syncLayout, 100);
-            syncLayout();
-        })();
+        // input-area 在文档流中，body flex 自然分配空间，无需 JS 计算
         setInterval(updateMemoryUsage, 5000);
         // 提前注册 SW 并订阅推送，同步计划到 Worker
         _getSwReg().then(() => {
