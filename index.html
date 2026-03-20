@@ -3368,17 +3368,25 @@
         let hourlyMessageTimer = null;
         function scheduleHourlyMessages() {
             // 启动时检查是否错过了消息
-            const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
-            const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
             const now = Date.now();
+            const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
+            const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
+
+            // 启动时检查是否错过了消息，补发
             if (lastFire > 0 && settings.autoReplyEnabled && (now - lastFire) >= intervalMs) {
                 const missed = Math.floor((now - lastFire) / intervalMs);
                 for (let i = 0; i < Math.min(missed, 3); i++) {
                     setTimeout(() => sendHourlyMessages(), i * 1500);
                 }
+                localStorage.setItem('lastHourlyFire', now);
             }
-            if (!lastFire) localStorage.setItem('lastHourlyFire', now);
-            // 后续由 Web Worker tick 驱动（checkAllScheduledEvents）
+
+            // 如果没有设置下次触发时间，随机设一个（50%~100% 间隔后）
+            const nextHourly = parseInt(localStorage.getItem('nextHourlyAt') || '0');
+            if (!nextHourly || nextHourly < now) {
+                const nextDelay = intervalMs * (0.5 + Math.random() * 0.5);
+                localStorage.setItem('nextHourlyAt', String(Math.floor(now + nextDelay)));
+            }
         }
         function sendHourlyMessages() {
             const min = settings.hourlyCountMin;
@@ -3500,36 +3508,123 @@
             const savedFavLetters = localStorage.getItem('favoriteLetters');
             if (savedFavLetters) { try { favoriteLetters = JSON.parse(savedFavLetters); } catch (e) { favoriteLetters = []; } }
             
-            if (localStorage.getItem('partnerAvatar')) updateAvatar(DOMElements.partner.avatar, localStorage.getItem('partnerAvatar'));
-            if (localStorage.getItem('myAvatar')) updateAvatar(DOMElements.me.avatar, localStorage.getItem('myAvatar'));
+            if (localStorage.getItem('partnerAvatar')) {
+                updateAvatar(DOMElements.partner.avatar, localStorage.getItem('partnerAvatar'));
+                // 迁移到 IDB
+                idbSet('partnerAvatar', localStorage.getItem('partnerAvatar'));
+                localStorage.removeItem('partnerAvatar');
+            }
+            if (localStorage.getItem('myAvatar')) {
+                updateAvatar(DOMElements.me.avatar, localStorage.getItem('myAvatar'));
+                idbSet('myAvatar', localStorage.getItem('myAvatar'));
+                localStorage.removeItem('myAvatar');
+            }
             const savedBackground = localStorage.getItem('chatBackground');
-            if (savedBackground) applyBackground(savedBackground);
+            if (savedBackground) {
+                applyBackground(savedBackground);
+                idbSet('chatBackground', savedBackground);
+                localStorage.removeItem('chatBackground');
+            }
             if (localStorage.getItem('appIcon')) {
                 settings.appIcon = localStorage.getItem('appIcon');
+                idbSet('appIcon', localStorage.getItem('appIcon'));
+                localStorage.removeItem('appIcon');
                 updateAppIcon();
             }
+            // 从 IDB 读取大体积数据
+            Promise.all([
+                idbGet('partnerAvatar'),
+                idbGet('myAvatar'),
+                idbGet('chatBackground'),
+                idbGet('appIcon'),
+                idbGet('videoBg'),
+                idbGet('pinnedDateBg'),
+                idbGet('stickerLibrary'),
+            ]).then(([partnerAv, myAv, bg, icon, videoBg, pinnedDateBg, stickers]) => {
+                if (partnerAv) updateAvatar(DOMElements.partner.avatar, partnerAv);
+                if (myAv) updateAvatar(DOMElements.me.avatar, myAv);
+                if (bg) applyBackground(bg);
+                if (icon) { settings.appIcon = icon; updateAppIcon(); }
+                if (videoBg) { settings.videoBg = videoBg; }
+                if (pinnedDateBg) { settings.pinnedDateBg = pinnedDateBg; }
+                if (stickers) { try { stickerLibrary = JSON.parse(stickers); } catch(e) {} }
+            });
             updateUI();
             // 初始化每日信件定时器
             scheduleDailyLetter();
         };
+        // ——— IndexedDB 用于存储大体积数据（头像、背景、表情包、图标）———
+        let _idb = null;
+        function getIDB() {
+            if (_idb) return Promise.resolve(_idb);
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('ChatAppDB', 1);
+                req.onupgradeneeded = e => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('media')) {
+                        db.createObjectStore('media', { keyPath: 'key' });
+                    }
+                };
+                req.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
+                req.onerror = () => reject();
+            });
+        }
+        async function idbSet(key, value) {
+            try {
+                const db = await getIDB();
+                return new Promise(resolve => {
+                    const tx = db.transaction('media', 'readwrite');
+                    tx.objectStore('media').put({ key, value });
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                });
+            } catch(e) { return false; }
+        }
+        async function idbGet(key) {
+            try {
+                const db = await getIDB();
+                return new Promise(resolve => {
+                    const req = db.transaction('media', 'readonly').objectStore('media').get(key);
+                    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+                    req.onerror = () => resolve(null);
+                });
+            } catch(e) { return null; }
+        }
+        async function idbDel(key) {
+            try {
+                const db = await getIDB();
+                return new Promise(resolve => {
+                    const tx = db.transaction('media', 'readwrite');
+                    tx.objectStore('media').delete(key);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                });
+            } catch(e) { return false; }
+        }
+
         const saveData = () => {
             try {
                 localStorage.setItem('chatMessages', JSON.stringify(messages));
-                localStorage.setItem('chatSettings', JSON.stringify(settings));
+                // 保存 settings 时去掉大体积 base64 字段，避免超出 5MB 限制
+                const settingsToSave = Object.assign({}, settings, { videoBg: null, pinnedDateBg: null, appIcon: null });
+                localStorage.setItem('chatSettings', JSON.stringify(settingsToSave));
                 localStorage.setItem('favoriteMessages', JSON.stringify(favoriteMessages));
                 localStorage.setItem('favoriteLetters', JSON.stringify(favoriteLetters));
                 localStorage.setItem('replyMessages', JSON.stringify(replyMessages));
                 localStorage.setItem('replyEmojis', JSON.stringify(replyEmojis));
-                localStorage.setItem('stickerLibrary', JSON.stringify(stickerLibrary));
                 localStorage.setItem('statusList', JSON.stringify(statusList));
                 localStorage.setItem('dailyLetters', JSON.stringify(dailyLetters));
                 localStorage.setItem('userLetters', JSON.stringify(userLetters));
                 localStorage.setItem('importantDates', JSON.stringify(importantDates));
+                // 大体积数据存 IndexedDB，不受 5MB 限制
                 const partnerImg = DOMElements.partner.avatar.querySelector('img');
-                if (partnerImg) localStorage.setItem('partnerAvatar', partnerImg.src);
+                if (partnerImg) idbSet('partnerAvatar', partnerImg.src);
                 const myImg = DOMElements.me.avatar.querySelector('img');
-                if (myImg) localStorage.setItem('myAvatar', myImg.src);
-                if (settings.appIcon) localStorage.setItem('appIcon', settings.appIcon);
+                if (myImg) idbSet('myAvatar', myImg.src);
+                if (settings.appIcon) idbSet('appIcon', settings.appIcon);
+                if (settings.videoBg) idbSet('videoBg', settings.videoBg);
+                if (settings.pinnedDateBg) idbSet('pinnedDateBg', settings.pinnedDateBg);
+                idbSet('stickerLibrary', JSON.stringify(stickerLibrary));
             } catch (e) { 
                 console.error("Error saving data:", e);
             }
@@ -3609,13 +3704,9 @@
         const applyBackground = (url) => { 
             document.getElementById('bg-layer').style.backgroundImage = `url(${url})`;
             document.body.classList.add('with-background');
-            try {
-                localStorage.setItem('chatBackground', url);
-            } catch (e) {
-                showNotification('背景图片过大，无法保存，但本次设置已生效', 'warning', 3000);
-            }
+            idbSet('chatBackground', url);
         };
-        const removeBackground = () => { document.getElementById('bg-layer').style.backgroundImage = ''; document.body.classList.remove('with-background'); localStorage.removeItem('chatBackground'); };
+        const removeBackground = () => { document.getElementById('bg-layer').style.backgroundImage = ''; document.body.classList.remove('with-background'); idbDel('chatBackground'); localStorage.removeItem('chatBackground'); };
 
         // ——— 引用预览条 ———
         function showQuotePreview(quote) {
@@ -3699,6 +3790,15 @@
                     const line2 = document.createElement('div'); line2.className = 'date-divider-line';
                     divider.appendChild(line1); divider.appendChild(text); divider.appendChild(line2);
                     DOMElements.chatContainer.appendChild(divider);
+                }
+
+                // 拒接消息：居中红色文字
+                if (msg.text && msg.text.startsWith('__REJECTED__')) {
+                    const rejDiv = document.createElement('div');
+                    rejDiv.style.cssText = 'text-align:center; color:#e53935; font-size:12px; padding:6px 16px; opacity:0.85;';
+                    rejDiv.textContent = msg.text.replace('__REJECTED__', '');
+                    DOMElements.chatContainer.appendChild(rejDiv);
+                    return;
                 }
                 const isSent = msg.sender === 'user';
                 const wrapper = document.createElement('div');
@@ -5061,7 +5161,7 @@
             DOMElements.settingsModal.themeColorBtns.forEach(btn => btn.addEventListener('click', () => { if(btn.dataset.theme !== settings.colorTheme) { settings.colorTheme = btn.dataset.theme; saveData(); updateUI(); } }));
             DOMElements.settingsModal.fontSizeSlider.addEventListener('input', (e) => { const fs = parseInt(e.target.value); settings.fontSize = fs; document.documentElement.style.setProperty('--font-size', `${fs}px`); DOMElements.settingsModal.fontSizeValue.textContent = `${fs}px`; saveData(); });
             DOMElements.settingsModal.setBackground.addEventListener('click', () => DOMElements.backgroundInput.click());
-            DOMElements.settingsModal.removeBackground.addEventListener('click', () => { if (localStorage.getItem('chatBackground') && confirm("确定要移除背景图片吗？")) removeBackground(); else if (!localStorage.getItem('chatBackground')) showNotification('当前没有设置背景图片', 'info', 2000); });
+            DOMElements.settingsModal.removeBackground.addEventListener('click', () => { if (document.body.classList.contains('with-background') && confirm("确定要移除背景图片吗？")) removeBackground(); else if (!document.body.classList.contains('with-background')) showNotification('当前没有设置背景图片', 'info', 2000); });
             DOMElements.settingsModal.setAppIcon.addEventListener('click', () => DOMElements.appIconInput.click());
             DOMElements.appIconInput.addEventListener('change', (e) => { const f = e.target.files[0]; if (!f) return; if (f.size > 5*1024*1024) { showNotification('开屏图标不能超过5MB','error',3000); return; } const reader = new FileReader(); reader.onload = (ev) => { settings.appIcon = ev.target.result; updateAppIcon(); saveData(); showNotification('开屏图标已更新','success',2000); }; reader.readAsDataURL(f); });
             DOMElements.settingsModal.setWelcomeBg.addEventListener('click', () => { DOMElements.welcomeBgModal.colorPicker.value = settings.welcomeBgColor; DOMElements.welcomeBgModal.modal.style.display = 'flex'; });
@@ -5249,7 +5349,11 @@
 
             // 视频通话控件
             const vc = DOMElements.videoCall;
-            vc.hangupBtn.addEventListener('click', endVideoCall);
+            vc.hangupBtn.addEventListener('click', () => {
+                // 如果还在等待接听（未接通），算作拒接
+                const isWaiting = vc.status.textContent === '等待接听...' || vc.status.textContent === '已拒接';
+                endVideoCall(isWaiting);
+            });
             vc.minimizeBtn.addEventListener('click', minimizeVideoCall);
             // 最小化浮窗：只有点击头像区域才恢复通话
             vc.minimizedBtn.addEventListener('click', (e) => {
@@ -5345,7 +5449,7 @@
                     videoCallTimer = setTimeout(() => {
                         if (videoCallActive) {
                             vc.status.textContent = '已拒接';
-                            setTimeout(() => { if (videoCallActive) endVideoCall(); }, 1200);
+                            setTimeout(() => { if (videoCallActive) endVideoCall(true); }, 1200);
                         }
                     }, rejectDelay);
                 } else {
@@ -5379,7 +5483,7 @@
             }, 1000);
         }
 
-        function endVideoCall() {
+        function endVideoCall(rejected = false) {
             videoCallActive = false;
             const vc = DOMElements.videoCall;
             clearTimeout(videoCallTimer);
@@ -5401,7 +5505,20 @@
             videoCallSeconds = 0;
             // The message is sent by whoever initiated the call
             const msgSender = isPartnerCallingVideo ? 'partner' : 'user';
-            addMessage({ id: Date.now(), sender: msgSender, text: `视频通话已结束 · ${durationText}`, timestamp: new Date(), isFavorite: false, status: 'read' });
+            let msgText;
+            if (rejected) {
+                // 拒接方名字
+                if (isPartnerCallingVideo) {
+                    // 对方打来，我拒接
+                    msgText = `__REJECTED__${settings.myName || '我'}拒绝了视频请求`;
+                } else {
+                    // 我打出去，对方拒接
+                    msgText = `__REJECTED__${settings.partnerName || '对方'}拒绝了你的视频请求`;
+                }
+            } else {
+                msgText = `视频通话已结束 · ${durationText}`;
+            }
+            addMessage({ id: Date.now(), sender: msgSender, text: msgText, timestamp: new Date(), isFavorite: false, status: 'read' });
         }
 
         function minimizeVideoCall() {
@@ -6498,12 +6615,15 @@
             function checkAllScheduledEvents() {
                 const now = Date.now();
 
-                // 1. 小时消息
-                const lastFire = parseInt(localStorage.getItem('lastHourlyFire') || '0');
-                const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
-                if (settings.autoReplyEnabled && lastFire > 0 && (now - lastFire) >= intervalMs) {
+                // 1. 消息：到了随机触发时间就发
+                const nextHourly = parseInt(localStorage.getItem('nextHourlyAt') || '0');
+                if (settings.autoReplyEnabled && nextHourly > 0 && now >= nextHourly) {
                     sendHourlyMessages();
                     localStorage.setItem('lastHourlyFire', now);
+                    // 下次触发：间隔时间内随机（50%~100%），让消息时间不固定
+                    const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
+                    const nextDelay = intervalMs * (0.5 + Math.random() * 0.5);
+                    localStorage.setItem('nextHourlyAt', now + nextDelay);
                 }
 
                 // 2. 待发来信
