@@ -3794,9 +3794,10 @@
 
                 // 拒接消息：居中红色文字
                 if (msg.text && msg.text.startsWith('__REJECTED__')) {
+                    const text = msg.text.replace('__REJECTED__', '');
                     const rejDiv = document.createElement('div');
-                    rejDiv.style.cssText = 'text-align:center; color:#e53935; font-size:12px; padding:6px 16px; opacity:0.85;';
-                    rejDiv.textContent = msg.text.replace('__REJECTED__', '');
+                    rejDiv.style.cssText = 'display:flex; justify-content:center; padding:6px 16px;';
+                    rejDiv.innerHTML = `<div style="display:inline-flex; align-items:center; gap:6px; background:rgba(255,100,100,0.08); border:1px solid rgba(255,100,100,0.2); border-radius:20px; padding:6px 14px; color:#e53935; font-size:13px;"><i class="fas fa-phone-slash" style="font-size:12px;"></i>${text}</div>`;
                     DOMElements.chatContainer.appendChild(rejDiv);
                     return;
                 }
@@ -5410,7 +5411,7 @@
             });
             // 来电
             vc.acceptBtn.addEventListener('click', () => { hideIncomingCall(); startVideoCall(true); });
-            vc.declineBtn.addEventListener('click', () => { hideIncomingCall(); showNotification('已拒绝通话', 'info', 2000); });
+            vc.declineBtn.addEventListener('click', () => { hideIncomingCall(); });
         }
 
 
@@ -5510,10 +5511,10 @@
                 // 拒接方名字
                 if (isPartnerCallingVideo) {
                     // 对方打来，我拒接
-                    msgText = `__REJECTED__${settings.myName || '我'}拒绝了视频请求`;
+                    msgText = `__REJECTED__${settings.myName || '我'} 暂时无法接听`;
                 } else {
                     // 我打出去，对方拒接
-                    msgText = `__REJECTED__${settings.partnerName || '对方'}拒绝了你的视频请求`;
+                    msgText = `__REJECTED__${settings.partnerName || '对方'} 暂时无法接听`;
                 }
             } else {
                 msgText = `视频通话已结束 · ${durationText}`;
@@ -6617,13 +6618,14 @@
 
                 // 1. 消息：到了随机触发时间就发
                 const nextHourly = parseInt(localStorage.getItem('nextHourlyAt') || '0');
+                console.log('[AutoMsg] now:', new Date(now).toLocaleTimeString(), 'nextHourlyAt:', nextHourly ? new Date(nextHourly).toLocaleTimeString() : '未设置', 'autoReply:', settings.autoReplyEnabled);
                 if (settings.autoReplyEnabled && nextHourly > 0 && now >= nextHourly) {
                     sendHourlyMessages();
                     localStorage.setItem('lastHourlyFire', now);
                     // 下次触发：间隔时间内随机（50%~100%），让消息时间不固定
                     const intervalMs = (settings.hourlyInterval || 60) * 60 * 1000;
                     const nextDelay = intervalMs * (0.5 + Math.random() * 0.5);
-                    localStorage.setItem('nextHourlyAt', now + nextDelay);
+                    localStorage.setItem('nextHourlyAt', String(Math.floor(now + nextDelay)));
                 }
 
                 // 2. 待发来信
